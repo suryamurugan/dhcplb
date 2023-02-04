@@ -35,10 +35,9 @@ const (
 )
 
 func (s *Server) handleConnection() {
-	buffer := s.bufPool.Get().([]byte)
+	buffer := make([]byte, s.config.PacketBufSize)
 	bytesRead, peer, err := s.conn.ReadFromUDP(buffer)
 	if err != nil || bytesRead == 0 {
-		s.bufPool.Put(buffer)
 		msg := "error reading from %s: %v"
 		glog.Errorf(msg, peer, err)
 		s.logger.LogErr(time.Now(), nil, nil, peer, ErrRead, err)
@@ -47,9 +46,6 @@ func (s *Server) handleConnection() {
 
 	go func() {
 		defer func() {
-			// always release this routine's buffer back to the pool
-			s.bufPool.Put(buffer)
-
 			if r := recover(); r != nil {
 				glog.Errorf("Panicked handling v%d packet from %s: %s", s.config.Version, peer, r)
 				glog.Errorf("Offending packet: %x", buffer[:bytesRead])
@@ -166,10 +162,7 @@ func (s *Server) sendToServer(start time.Time, server *DHCPServer, packet []byte
 		return err
 	}
 
-	err = s.logger.LogSuccess(start, server, packet, peer)
-	if err != nil {
-		glog.Errorf("Failed to log request: %s", err)
-	}
+	s.logger.LogSuccess(start, server, packet, peer)
 
 	return nil
 }
@@ -214,10 +207,7 @@ func (s *Server) handleRawPacketV4(buffer []byte, peer *net.UDPAddr) {
 
 func (s *Server) handleV4Server(start time.Time, packet *dhcpv4.DHCPv4, peer *net.UDPAddr) {
 	reply, err := s.config.Handler.ServeDHCPv4(packet)
-	logErr := s.logger.LogSuccess(start, nil, packet.ToBytes(), peer)
-	if logErr != nil {
-		glog.Errorf("Failed to log incoming packet: %s", logErr)
-	}
+	s.logger.LogSuccess(start, nil, packet.ToBytes(), peer)
 	if err != nil {
 		glog.Errorf("Error creating reply %s", err)
 		s.logger.LogErr(start, nil, packet.ToBytes(), peer, fmt.Sprintf("%T", err), err)
@@ -228,11 +218,7 @@ func (s *Server) handleV4Server(start time.Time, packet *dhcpv4.DHCPv4, peer *ne
 		Port: dhcpv4.ServerPort,
 	}
 	s.conn.WriteTo(reply.ToBytes(), addr)
-	err = s.logger.LogSuccess(start, nil, reply.ToBytes(), peer)
-	if err != nil {
-		glog.Errorf("Failed to log reply: %s", err)
-	}
-	return
+	s.logger.LogSuccess(start, nil, reply.ToBytes(), peer)
 }
 
 func (s *Server) handleRawPacketV6(buffer []byte, peer *net.UDPAddr) {
@@ -294,7 +280,7 @@ func (s *Server) handleRawPacketV6(buffer []byte, peer *net.UDPAddr) {
 		return
 	}
 
-	relayMsg, err := dhcpv6.EncapsulateRelay(packet, dhcpv6.MessageTypeRelayForward, net.IPv6zero, peer.IP)
+	relayMsg, _ := dhcpv6.EncapsulateRelay(packet, dhcpv6.MessageTypeRelayForward, net.IPv6zero, peer.IP)
 	s.sendToServer(start, server, relayMsg.ToBytes(), peer)
 }
 
@@ -321,20 +307,13 @@ func (s *Server) handleV6RelayRepl(start time.Time, packet dhcpv6.DHCPv6, peer *
 		return
 	}
 	conn.Write(msg.ToBytes())
-	err = s.logger.LogSuccess(start, nil, packet.ToBytes(), peer)
-	if err != nil {
-		glog.Errorf("Failed to log request: %s", err)
-	}
+	s.logger.LogSuccess(start, nil, packet.ToBytes(), peer)
 	conn.Close()
-	return
 }
 
 func (s *Server) handleV6Server(start time.Time, packet dhcpv6.DHCPv6, peer *net.UDPAddr) {
 	reply, err := s.config.Handler.ServeDHCPv6(packet)
-	logErr := s.logger.LogSuccess(start, nil, packet.ToBytes(), peer)
-	if logErr != nil {
-		glog.Errorf("Failed to log incoming packet: %s", logErr)
-	}
+	s.logger.LogSuccess(start, nil, packet.ToBytes(), peer)
 	if err != nil {
 		glog.Errorf("Error creating reply %s", err)
 		s.logger.LogErr(start, nil, packet.ToBytes(), peer, fmt.Sprintf("%T", err), err)
@@ -345,9 +324,5 @@ func (s *Server) handleV6Server(start time.Time, packet dhcpv6.DHCPv6, peer *net
 		Port: dhcpv6.DefaultServerPort,
 	}
 	s.conn.WriteTo(reply.ToBytes(), addr)
-	err = s.logger.LogSuccess(start, nil, reply.ToBytes(), peer)
-	if err != nil {
-		glog.Errorf("Failed to log reply: %s", err)
-	}
-	return
+	s.logger.LogSuccess(start, nil, reply.ToBytes(), peer)
 }
